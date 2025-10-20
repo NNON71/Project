@@ -153,7 +153,7 @@ class CustomObjectDetectionDataset(Dataset) :
             orig_width, orig_height = self.image_size, self.image_size
             
         # Get annotations
-        annotations = self.image_id_to_anns[img_info['id']]
+        annotations = self.image_id_to_annotations[img_info['id']]
         
         # Extract boxes and labels
         boxes = []
@@ -179,7 +179,7 @@ class CustomObjectDetectionDataset(Dataset) :
             labels.append(ann['category_id'])
             
         # Limit to max_objects
-        num_objects = min(len(boxes))
+        num_objects = len(boxes)
         if num_objects > self.max_objects :
             boxes = boxes[:self.max_objects]
             labels = labels[:self.max_objects]
@@ -326,3 +326,29 @@ def create_sample_coco_annotations(
 #     'data/object_detection/annotations/train.json',
 #     num_images=5
 # )
+
+dataset = CustomObjectDetectionDataset(
+    annotations_file='data/object_detection/annotations/train.json',
+    images_dir='data/object_detection/images/train',
+    class_names=[
+        "door", "cabinetDoor", "refrigeratorDoor", "window", "chair",
+        "table", "cabinet", "couch", "openedDoor", "pole"
+      ],
+    thai_class_names=[
+        "ประตู","ประตูตู้", "ประตูตู้เย็น", "หน้าต่าง", "เก้าอี้", 
+        "โต๊ะ", "ตู้", "โซฟา", "ประตูเปิด", "เสา"
+      ],
+    image_size=224,
+    augment=True
+)   
+
+print(f"Dataset size: {len(dataset)}")
+
+if len(dataset) > 0:
+    sample = dataset[0]
+    print(f"\nSample keys: {sample.keys()}")
+    print(f"Image shape: {sample['pixel_values'].shape}")
+    print(f"Boxes shape: {sample['boxes'].shape}")
+    print(f"Labels shape: {sample['labels'].shape}")
+    print(f"Num objects: {sample['num_objects']}")
+    print(f"Thai queries: {sample['text_queries']}")
