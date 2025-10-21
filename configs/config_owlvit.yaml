@@ -1,0 +1,92 @@
+# OWL-ViT Detection Training Configuration (Stage 2)
+
+experiment:
+  name: "thai_owlvit_detection"
+  seed: 42
+  device: "cuda"
+
+model:
+  projection_dim: 512
+  image_encoder: "openai/clip-vit-base-patch32"
+  text_encoder: "clicknext/phayathaibert"
+  freeze_clip_backbone: true  # แนะนำให้ freeze ในตอนแรก
+  clip_checkpoint: "checkpoints/clip_backbone/best.pth"
+
+dataset:
+  # Annotations (COCO format)
+  train_annotations: "data/indoor-coco/annotations/train.json"
+  val_annotations: "data/indoor-coco/annotations/val.json"
+  test_annotations: "data/indoor-coco/annotations/test.json"
+
+  # Images
+  train_images: "data/indoor-coco/images/train"
+  val_images: "data/indoor-coco/images/val"
+  test_images: "data/indoor-coco/images/test"
+
+  # Classes (English)
+  class_names: 
+    - "door"
+    - "cabinetDoor"
+    - "refrigeratorDoor"
+    - "window"
+    - "chair"
+    - "table"
+    - "cabinet"
+    - "couch"
+    - "openedDoor"
+    - "pole"
+
+  # Classes (Thai)
+  thai_class_names:
+    - "ประตู"
+    - "ประตูตู้"
+    - "ประตูตู้เย็น"
+    - "หน้าต่าง"
+    - "เก้าอี้"
+    - "โต๊ะ"
+    - "ตู้"
+    - "โซฟา"
+    - "ประตูเปิด"
+    - "เสา"
+
+  image_size: 224
+  max_objects: 20
+  num_workers: 4
+
+training:
+  epochs: 20
+  batch_size: 16
+  learning_rate: 1.0e-4
+  backbone_lr_mult: 0.1  # ถ้า unfreeze backbone
+  weight_decay: 1.0e-4
+  min_lr: 1.0e-6
+  scheduler_t0: 10
+  warmup_epochs: 5
+  grad_clip_norm: 1.0
+  mixed_precision: true
+  save_interval: 10
+  
+  # Loss Weights
+  class_loss_weight: 1.0
+  box_loss_weight: 5.0
+  giou_loss_weight: 2.0
+  clip_loss_weight: 0.0
+
+evaluation:
+  batch_size: 8
+  confidence_threshold: 0.3
+  iou_threshold: 0.5
+  nms_threshold: 0.5
+
+wandb:
+  enabled: true
+  project: "thai-owlvit"
+  entity: "nnon71"
+  run_name: "owlvit_detection_v1"
+  log_interval: 10
+  image_log_interval: 5
+
+checkpoint:
+  save_dir: "checkpoints/owlvit_detection"
+  save_best: true
+  save_last: true

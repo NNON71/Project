@@ -1,0 +1,43 @@
+# CLIP Backbone Training Configuration (Stage 1)
+
+experiment:
+  name: "thai_clip_backbone"
+  seed: 42
+  device: "cuda"
+
+model:
+  projection_dim: 512
+  image_encoder: "openai/clip-vit-base-patch32"
+  text_encoder: "clicknext/phayathaibert"
+  freeze_vision_encoder: false
+  freeze_text_encoder: false
+
+dataset:
+  # train_images: "data/clip_pretraining/images/train"
+  # train_captions: "data/clip_pretraining/captions/train_captions.json"
+  # val_images: "data/clip_pretraining/images/val"
+  # val_captions: "data/clip_pretraining/captions/val_captions.json"
+  image_size: 224
+  num_workers: 4
+
+training:
+  epochs: 3
+  batch_size: 64
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  warmup_epochs: 3
+  grad_clip_norm: 1.0
+  mixed_precision: true
+  save_interval: 1
+
+wandb:
+  enabled: true
+  project: "thai-owlvit"
+  entity: "NNON71"
+  run_name: "clip_backbone_v1"
+  log_interval: 10
+
+checkpoint:
+  save_dir: "checkpoints/clip_backbone"
+  save_best: true
+  save_last: true
