@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 import wandb
 import yaml
 import argparse
@@ -52,7 +52,7 @@ class OWLViTDetectionTrainer :
         
         # Mixed precision
         self.use_amp = config['training']['mixed_precision']
-        self.scaler = GradScaler() if self.use_amp else None
+        self.scaler = GradScaler(device=self.device) if self.use_amp else None
         
         # Training state
         self.start_epoch = 0
@@ -159,7 +159,7 @@ class OWLViTDetectionTrainer :
             shuffle=True,
             num_workers=self.config['dataset']['num_workers'],
             collate_fn=detection_collate_fn,
-            pin_memory=True,
+            pin_memory=False,
             drop_last=True
         )
         
@@ -169,7 +169,7 @@ class OWLViTDetectionTrainer :
             shuffle=False,
             num_workers=self.config['dataset']['num_workers'],
             collate_fn=detection_collate_fn,
-            pin_memory=True
+            pin_memory=False
         )
         
         print(f"✓ Train: {len(train_dataset)} images, {len(train_loader)} batches")
@@ -384,7 +384,7 @@ class OWLViTDetectionTrainer :
         
         # Set CLIP to eval if frozen
         if self.config['model']['freeze_clip_backbone']:
-            self.model.clip.eval()
+            self.model.backbone.eval()
         
         metrics = {
             'total_loss': 0.0,
@@ -411,7 +411,7 @@ class OWLViTDetectionTrainer :
             
             # Forward
             if self.use_amp:
-                with autocast():
+                with autocast(device_type=self.device.type, dtype=torch.float16):
                     outputs = self.model(
                         pixel_values=pixel_values,
                         input_ids=input_ids,
@@ -495,7 +495,7 @@ class OWLViTDetectionTrainer :
     
     @torch.no_grad()
     def validate(self, epoch: int) -> Tuple[Dict[str, float], float]:
-        """Validate model"""
+        """Validate model and compute mAP"""
         self.model.eval()
         
         metrics = {
@@ -520,28 +520,49 @@ class OWLViTDetectionTrainer :
                 'boxes': batch['boxes'].to(self.device)
             }
             
+            # Forward pass
             outputs = self.model(
                 pixel_values=pixel_values,
                 input_ids=input_ids,
                 attention_mask=attention_mask
             )
             
+            # Compute losses
             losses = self.compute_detection_loss(outputs, targets)
             
             for key in metrics.keys():
                 metrics[key] += losses[key].item()
             
-            # Store for mAP
-            all_predictions.append({
-                'logits': outputs['logits'].cpu(),
-                'boxes': outputs['pred_boxes'].cpu()
-            })
-            all_targets.append({
-                'labels': targets['labels'].cpu(),
-                'boxes': targets['boxes'].cpu()
-            })
+            # Extract predictions
+            pred_logits = outputs['logits']  # [B, num_patches, num_classes]
+            pred_boxes = outputs['pred_boxes']  # [B, num_patches, 4]
+            
+            batch_size = pred_logits.shape[0]
+            
+            # Process each image in batch
+            for i in range(batch_size):
+                # Get scores and labels
+                scores, labels = pred_logits[i].max(dim=-1)  # [num_patches]
+                
+                # Apply confidence threshold
+                conf_threshold = self.config['evaluation']['confidence_threshold']
+                conf_mask = scores > conf_threshold
+                
+                # Append predictions
+                all_predictions.append({
+                    'boxes': pred_boxes[i][conf_mask].cpu(),
+                    'labels': labels[conf_mask].cpu(),
+                    'scores': scores[conf_mask].cpu()
+                })
+                
+                # Append ground truth (filter padding)
+                valid_mask = targets['labels'][i] >= 0
+                all_targets.append({
+                    'boxes': targets['boxes'][i][valid_mask].cpu(),
+                    'labels': targets['labels'][i][valid_mask].cpu()
+                })
         
-        # Average metrics
+        # Average losses
         for key in metrics.keys():
             metrics[key] /= len(self.val_loader)
         
@@ -553,8 +574,13 @@ class OWLViTDetectionTrainer :
                 num_classes=len(self.config['dataset']['class_names']),
                 iou_threshold=self.config['evaluation']['iou_threshold']
             )
+            print(f"\n  ✓ mAP@{self.config['evaluation']['iou_threshold']}: {map_score:.4f}")
         except Exception as e:
-            print(f"Warning: Could not compute mAP: {e}")
+            import traceback
+            print(f"\n  ✗ Error computing mAP:")
+            print(f"    {str(e)}")
+            print(f"    Traceback:")
+            print(traceback.format_exc())
             map_score = 0.0
         
         # Log to W&B
@@ -638,6 +664,8 @@ def main():
     parser.add_argument('--config', type=str, required=True, help='Path to config file')
     parser.add_argument('--clip-checkpoint', type=str, required=True, help='Path to CLIP checkpoint')
     parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint')
+    parser.add_argument('--resume-weights-only', action='store_true', 
+                       help='Resume model weights only (skip optimizer/scheduler)')  # ✅ NEW
     args = parser.parse_args()
     
     # Load config
@@ -649,13 +677,68 @@ def main():
     
     # Resume if specified
     if args.resume:
-        checkpoint = torch.load(args.resume)
-        trainer.model.load_state_dict(checkpoint['model_state_dict'])
-        trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        trainer.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        trainer.start_epoch = checkpoint['epoch'] + 1
-        trainer.best_map = checkpoint.get('best_map', 0.0)
-        print(f"✓ Resumed from epoch {trainer.start_epoch}")
+        print("\n" + "="*80)
+        print("Resuming Training from Checkpoint")
+        print("="*80)
+        print(f"Loading: {args.resume}")
+        
+        if not Path(args.resume).exists():
+            print(f"❌ Error: Checkpoint not found at {args.resume}")
+            return
+        
+        try:
+            checkpoint = torch.load(args.resume, map_location=trainer.device)
+            
+            # ✅ Always load model state
+            trainer.model.load_state_dict(checkpoint['model_state_dict'])
+            print("✓ Loaded model weights")
+            
+            # ✅ Conditionally load optimizer/scheduler
+            if args.resume_weights_only:
+                print("⚠️  Skipping optimizer and scheduler (weights only mode)")
+                trainer.start_epoch = 0
+                trainer.best_map = 0.0
+                trainer.global_step = 0
+            else:
+                # Try to load optimizer state
+                try:
+                    trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                    print("✓ Loaded optimizer state")
+                except (ValueError, KeyError) as e:
+                    print(f"⚠️  Could not load optimizer state: {e}")
+                    print("   Continuing with fresh optimizer...")
+                
+                # Try to load scheduler state
+                try:
+                    trainer.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                    print("✓ Loaded scheduler state")
+                except (ValueError, KeyError) as e:
+                    print(f"⚠️  Could not load scheduler state: {e}")
+                    print("   Continuing with fresh scheduler...")
+                
+                # Load training state
+                trainer.start_epoch = checkpoint.get('epoch', 0) + 1
+                trainer.best_map = checkpoint.get('best_map', 0.0)
+                trainer.global_step = checkpoint.get('global_step', 0)
+                
+                # Try to load scaler state (if using AMP)
+                if trainer.use_amp and 'scaler_state_dict' in checkpoint:
+                    try:
+                        trainer.scaler.load_state_dict(checkpoint['scaler_state_dict'])
+                        print("✓ Loaded GradScaler state")
+                    except Exception as e:
+                        print(f"⚠️  Could not load GradScaler state: {e}")
+            
+            print(f"\n✓ Resuming from epoch {trainer.start_epoch}")
+            print(f"  Best mAP so far: {trainer.best_map:.4f}")
+            print(f"  Global step: {trainer.global_step}")
+            print("="*80 + "\n")
+            
+        except Exception as e:
+            print(f"❌ Error loading checkpoint: {e}")
+            import traceback
+            traceback.print_exc()
+            return
     
     # Train
     trainer.train()

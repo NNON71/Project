@@ -197,15 +197,14 @@ class CustomOWLViTForObjectDetection(nn.Module) :
             # Project text embeddings: [B*num_queries, projection_dim] -> [B*num_queries, text_hidden_size]
             projected_text_embeds = self.text_projection_for_detection(text_embeds)
             
+            num_queries = text_embeds.shape[0]
             # Reshape to [B, num_queries, text_hidden_size]
-            max_text_queries = input_ids.shape[0] // batch_size
-            query_embeds = projected_text_embeds.reshape(
-                batch_size, max_text_queries, self.text_hidden_size
+            query_embeds = projected_text_embeds.unsqueeze(0).expand(
+                batch_size, -1, -1
             )
             
             # Create query mask (non-padded queries)
-            input_ids_reshaped = input_ids.reshape(batch_size, max_text_queries, input_ids.shape[-1])
-            query_mask = input_ids_reshaped[..., 0] > 0  # First token > 0 means valid query
+            query_mask = torch.ones(batch_size, num_queries, dtype=torch.bool, device=text_embeds.device)  # First token > 0 means valid query
             
             # Classification predictions
             pred_logits, class_embeds = self.class_head(

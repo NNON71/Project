@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 import wandb
 import yaml
 import argparse
@@ -107,6 +107,7 @@ class CLIPBackboneTrainer :
             dataset_split="train",
             image_column="image",
             text_column="th_sentences_raw",
+            cap_per_image=5,
             augment=True,
             max_samples=10000
         )
@@ -116,6 +117,7 @@ class CLIPBackboneTrainer :
             dataset_split="validation",
             image_column="image",
             text_column="th_sentences_raw",
+            cap_per_image=5,
             augment=False,
             max_samples=2000
         )

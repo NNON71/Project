@@ -105,12 +105,12 @@ class CustomObjectDetectionDataset(Dataset) :
         if self.augment :
             transforms.extend([
                 T.ColorJitter(
-                    brightness=0.4,
-                    contrast=0.4,
-                    saturation=0.4,
-                    hue=0.1
+                    brightness=0.2,
+                    contrast=0.2,
+                    saturation=0.2,
+                    hue=0.05
                 ),
-                T.RandomHorizontalFlip(p=0.5),
+                # T.RandomHorizontalFlip(p=0.5),
             ])
                 
         transforms.extend([
@@ -228,10 +228,10 @@ def detection_collate_fn(batch: List[Dict]) -> Dict:
     labels = torch.stack([item['labels'] for item in batch])
     
     # Tokenize text queries
-    all_queries = batch[0]['text_queries']  # same for all in batch
+    text_queries = batch[0]['text_queries'] # same for all in batch
     tokenizer = AutoTokenizer.from_pretrained("clicknext/phayathaibert")
     text_inputs = tokenizer(
-        all_queries,
+        text_queries,
         padding=True,
         truncation=True,
         max_length=77,

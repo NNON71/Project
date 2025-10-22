@@ -41,7 +41,7 @@ def calculate_iou_batch(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Ten
     union_area = boxes1_area[:, None] + boxes2_area[None, :] - intersection_area  # [N, M]
     
     # Compute IoU
-    iou = intersection_area / union_area.clamp(min=1e-6)
+    iou = intersection_area / (union_area + 1e-6)
     
     return iou
 

@@ -82,7 +82,7 @@ class CLIPPretrainingDataset(Dataset) :
         else :
             raise ValueError("Either dataset_name or both image_dir and caption_file must be provided.")
 
-    def _load_hf_dataset(self, dataset_name: str, split: str, image_col: str, text_col: str, streaming: bool) :
+    def _load_hf_dataset(self, dataset_name: str, split: str, image_col: str, text_col: str, streaming: bool):
         print(f"Loading HF dataset: {dataset_name}, split: {split}")
         
         try:
@@ -93,30 +93,56 @@ class CLIPPretrainingDataset(Dataset) :
                 cache_dir="data/huggingface"
             )
             
+            # Check dataset structure
+            print(f"Dataset features: {self.dataset.features if hasattr(self.dataset, 'features') else 'Unknown'}")
+            
+            # Test first item
+            if not streaming:
+                try:
+                    # first_item = self.dataset[0]
+                    # print(f"First item keys: {list(first_item.keys())}")
+                    # print(f"Image column '{image_col}' exists: {image_col in first_item}")
+                    # print(f"Text column '{text_col}' exists: {text_col in first_item}")
+                    
+                    # if image_col in first_item:
+                    #     print(f"Image type: {type(first_item[image_col])}")
+                    # if text_col in first_item:
+                    #     print(f"Text type: {type(first_item[text_col])}")
+                    #     if isinstance(first_item[text_col], list):
+                    #         print(f"Text list length: {len(first_item[text_col])}")
+                    #         if len(first_item[text_col]) > 0:
+                    #             print(f"First text: {str(first_item[text_col][0])[:100]}")
+                    pass
+                                
+                except Exception as e:
+                    print(f"Error examining first item: {e}")
+            
             if streaming:
-                # For streaming datasets, we can't get exact length
                 self.is_streaming = True
                 self.data_items = self.dataset
             else:
                 self.is_streaming = False
-                self.data_items = list(self.dataset)
+                self.data_items = self.dataset
                 
-                # Apply max_samples limit
                 if self.max_samples:
-                    self.data_items = self.data_items[:self.max_samples]
+                    print(f"Limiting to {self.max_samples} samples")
+                    self.data_items = self.data_items.select(range(min(self.max_samples, len(self.data_items))))
             
             self.image_column = image_col
             self.text_column = text_col
             self.dataset_type = "hf"
             
             print(f"✓ Loaded HF dataset")
-            if not streaming:
-                print(f"  Samples: {len(self.data_items)}")
+            try:
+                dataset_size = len(self.data_items) if hasattr(self.data_items, '__len__') else "Unknown"
+                print(f"  Samples: {dataset_size}")
+            except:
+                print(f"  Samples: Unknown (large dataset)")
             
         except Exception as e:
             print(f"Error loading HF dataset: {e}")
             raise
-    
+        
     def _load_local_dataset(self, image_dir: str, caption_file: str):
         """Load local dataset (original functionality)"""
         print(f"Loading local dataset from: {image_dir}")
@@ -134,6 +160,7 @@ class CLIPPretrainingDataset(Dataset) :
             self.image_filenames = self.image_filenames[:self.max_samples]
         
         self.dataset_type = "local"
+        self.cap_per_image: int = 5
         
         print(f"✓ Loaded local dataset")
         print(f"  Samples: {len(self.image_filenames)}")
@@ -177,13 +204,18 @@ class CLIPPretrainingDataset(Dataset) :
     def __len__(self) :
         if self.dataset_type == "hf" and hasattr(self, 'is_streaming') and self.is_streaming:
             # For streaming datasets, return a large number
-            return 1000000  # You might want to adjust this
+            base_size = 1000000  # You might want to adjust this
         elif self.dataset_type == "hf":
-            return len(self.data_items)
+            base_size = len(self.data_items)
         else:
-            return len(self.image_filenames)
+            base_size = len(self.image_filenames)
+        
+        return base_size * self.cap_per_image
     
     def __getitem__(self, idx: int) -> Dict:
+        original_idx = idx // self.cap_per_image
+        caption_idx = idx % self.cap_per_image
+        
         if self.dataset_type == "hf":
             return self._get_hf_item(idx)
         else:
@@ -192,31 +224,91 @@ class CLIPPretrainingDataset(Dataset) :
     def _get_hf_item(self, idx: int) -> Dict:
         """Get item from Hugging Face dataset"""
         try:
+            
+            if self.max_samples and idx >= self.max_samples:
+                idx = idx % self.max_samples
+                
             if self.is_streaming:
                 # For streaming, we need to iterate
                 item = next(iter(self.data_items.skip(idx).take(1)))
             else:
                 item = self.data_items[idx]
             
+            # Debug: print item structure
+            if idx == 0:  # Print structure for first item only
+                print(f"Item keys: {list(item.keys())}")
+                print(f"Image type: {type(item[self.image_column])}")
+                print(f"Text type: {type(item[self.text_column])}")
+                if isinstance(item[self.text_column], list):
+                    print(f"Text length: {len(item[self.text_column])}")
+                    print(f"First text: {item[self.text_column][0][:100] if item[self.text_column] else 'Empty'}")
+            
             # Get image
             image = item[self.image_column]      
             
-                # Transform image
+            # Handle image
+            if image is None:
+                print(f"Warning: None image at idx {idx}")
+                image = Image.new('RGB', (self.image_size, self.image_size))
+            elif hasattr(image, 'convert'):
+                image = image.convert('RGB')
+            elif isinstance(image, str):
+                # Handle image path/URL
+                if os.path.exists(image):
+                    image = Image.open(image).convert('RGB')
+                else:
+                    print(f"Warning: Image path not found at idx {idx}: {image}")
+                    image = Image.new('RGB', (self.image_size, self.image_size))
+            else:
+                print(f"Warning: Unknown image type at idx {idx}: {type(image)}")
+                image = Image.new('RGB', (self.image_size, self.image_size))
+            
+            # Validate image size
+            if image.size[0] == 0 or image.size[1] == 0:
+                print(f"Warning: Invalid image size at idx {idx}: {image.size}")
+                image = Image.new('RGB', (self.image_size, self.image_size))
+            
+            # Transform image
             image_tensor = self.transform(image)
             
             # Get text/caption
-            caption = item[self.text_column]
-            if isinstance(caption, list):
-                caption = caption[0]  # Take first caption if list
+            caption_data = item[self.text_column]
+            
+            if caption_data is None:
+                caption = "empty caption"
+            elif isinstance(caption_data, list):
+                if len(caption_data) > 0:
+                    caption = str(caption_data[0]).strip()
+                else:
+                    caption = "empty caption"
+            elif isinstance(caption_data, str):
+                caption = caption_data.strip()
+            else:
+                caption = str(caption_data).strip()
+            
+            # Validate caption
+            if not caption or caption == "":
+                caption = "empty caption"
             
             return {
                 'pixel_values': image_tensor,
-                'caption': str(caption),
+                'caption': caption,
                 'image_file': f"hf_item_{idx}"
             }
             
         except Exception as e:
-            print(f"Error processing HF item {idx}: {e}")
+            # แสดง error ที่แท้จริง
+            print(f"Error processing HF item {idx}: {type(e).__name__}: {str(e)}")
+            
+            # ลองดู structure ของ item ถ้า error
+            try:
+                if 'item' in locals():
+                    print(f"  Item keys: {list(item.keys()) if hasattr(item, 'keys') else 'No keys'}")
+                    print(f"  Image column '{self.image_column}': {type(item.get(self.image_column, 'Missing'))}")
+                    print(f"  Text column '{self.text_column}': {type(item.get(self.text_column, 'Missing'))}")
+            except:
+                pass
+            
             # Return placeholder
             image = Image.new('RGB', (self.image_size, self.image_size))
             image_tensor = self.transform(image)
