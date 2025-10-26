@@ -1,4 +1,6 @@
 data
+checkpoints
 wandb
 venv
+ref
 __pycache__/
