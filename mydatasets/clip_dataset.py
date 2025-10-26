@@ -6,7 +6,7 @@ import os
 from typing import Dict, List, Optional
 import torchvision.transforms as T
 from datasets import load_dataset
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoProcessor
 import requests
 from io import BytesIO
 
@@ -41,12 +41,15 @@ class CLIPPretrainingDataset(Dataset) :
         image_column: str = "image",
         text_column: str = "text",
         streaming: bool = False,
+        cap_per_image: int = 5,
         
         # Common Options 
         image_size: int = 224,
         augment: bool = False,
         tokenizer_name: str = "clicknext/phayathaibert",
         max_samples: Optional[int] = None
+        
+        
     ) :
         """_summary_
 
@@ -74,6 +77,8 @@ class CLIPPretrainingDataset(Dataset) :
 
         # setup image transformations
         self.transform = self._build_transforms()
+        
+        self.cap_per_image = cap_per_image
         
         if dataset_name :
             self._load_hf_dataset(dataset_name, dataset_split, image_column, text_column, streaming)
@@ -213,9 +218,6 @@ class CLIPPretrainingDataset(Dataset) :
         return base_size * self.cap_per_image
     
     def __getitem__(self, idx: int) -> Dict:
-        original_idx = idx // self.cap_per_image
-        caption_idx = idx % self.cap_per_image
-        
         if self.dataset_type == "hf":
             return self._get_hf_item(idx)
         else:
@@ -225,8 +227,8 @@ class CLIPPretrainingDataset(Dataset) :
         """Get item from Hugging Face dataset"""
         try:
             
-            if self.max_samples and idx >= self.max_samples:
-                idx = idx % self.max_samples
+            # if self.max_samples and idx >= self.max_samples:
+            #     idx = idx % self.max_samples
                 
             if self.is_streaming:
                 # For streaming, we need to iterate
@@ -235,13 +237,13 @@ class CLIPPretrainingDataset(Dataset) :
                 item = self.data_items[idx]
             
             # Debug: print item structure
-            if idx == 0:  # Print structure for first item only
-                print(f"Item keys: {list(item.keys())}")
-                print(f"Image type: {type(item[self.image_column])}")
-                print(f"Text type: {type(item[self.text_column])}")
-                if isinstance(item[self.text_column], list):
-                    print(f"Text length: {len(item[self.text_column])}")
-                    print(f"First text: {item[self.text_column][0][:100] if item[self.text_column] else 'Empty'}")
+            # if idx == 0:  # Print structure for first item only
+            #     print(f"Item keys: {list(item.keys())}")
+            #     print(f"Image type: {type(item[self.image_column])}")
+            #     print(f"Text type: {type(item[self.text_column])}")
+            #     if isinstance(item[self.text_column], list):
+            #         print(f"Text length: {len(item[self.text_column])}")
+            #         print(f"First text: {item[self.text_column][0][:100] if item[self.text_column] else 'Empty'}")
             
             # Get image
             image = item[self.image_column]      
@@ -267,9 +269,12 @@ class CLIPPretrainingDataset(Dataset) :
             if image.size[0] == 0 or image.size[1] == 0:
                 print(f"Warning: Invalid image size at idx {idx}: {image.size}")
                 image = Image.new('RGB', (self.image_size, self.image_size))
+                
+            # convert to RGB 
+            # image = image.convert('RGB')
             
-            # Transform image
             image_tensor = self.transform(image)
+            # Transform image
             
             # Get text/caption
             caption_data = item[self.text_column]
