@@ -82,30 +82,108 @@ class OWLViTDetectionTrainer :
         )
         
         # load pretrained CLIP Backbone
-        if clip_checkpoint_path or self.config['model']['clip_checkpoint_path'] :
+        if clip_checkpoint_path or self.config['model']['clip_checkpoint_path']:
             checkpoint_path = clip_checkpoint_path or self.config['model']['clip_checkpoint_path']
             print(f"\nLoading pretrained CLIP from: {checkpoint_path}")
             
             clip_checkpoint = torch.load(checkpoint_path, map_location=self.device)
-            clip_state_dict = clip_checkpoint['model_state_dict']
+            clip_state_dict = clip_checkpoint.get('model_state_dict', clip_checkpoint)
             
-            # Filter CLIP-related keys
             model_state_dict = model.state_dict()
             filtered_state_dict = {}
             
-            for k, v in clip_state_dict.items():
-                # Map keys from CLIP backbone to full model
-                if k.startswith('clip.') or any(x in k for x in ['vision_', 'text_', 'logit_scale']):
-                    new_key = f"clip.{k}" if not k.startswith('clip.') else k
-                    if new_key in model_state_dict:
-                        filtered_state_dict[new_key] = v
+            # Map extracted CLIP keys to model keys
+            for clip_key, clip_value in clip_state_dict.items():
+                model_key = None
+                # After extraction, keys should be clean:
+                # vision_model.X → backbone.vision_model.vision_model.X
+                # text_model.X → backbone.text_model.text_model.X
+                
+                if clip_key.startswith('vision_model.'):
+                    # May need to add double prefix
+                    model_key = f"backbone.vision_model.{clip_key}"
+                elif clip_key.startswith('text_model.'):
+                    model_key = f"backbone.text_model.{clip_key}"
+                    
+                elif clip_key == 'visual_projection.weight':
+                    # Handle visual projection specifically
+                    possible_keys = [
+                        "backbone.vision_projection.weight",
+                        "backbone.visual_projection.weight",
+                    ]
+                    for test_key in possible_keys:
+                        if test_key in model_state_dict and clip_value.shape == model_state_dict[test_key].shape:
+                            filtered_state_dict[test_key] = clip_value
+                            print(f'✓ visual_projection mapped: {clip_key} -> {test_key}')
+                            break
+                    continue  # Skip the rest of the logic for this key
+                
+                elif clip_key == 'text_projection.weight':
+                    # Handle text projection specifically
+                    test_key = "backbone.text_projection.weight"
+                    if test_key in model_state_dict and clip_value.shape == model_state_dict[test_key].shape:
+                        filtered_state_dict[test_key] = clip_value
+                        print(f'✓ text_projection mapped: {clip_key} -> {test_key}')
+                        continue  # Skip the rest of the logic for this key
+                    
+                elif 'projection' in clip_key:
+                        # Handle other projection layers
+                        if 'vision' in clip_key:
+                            model_key = f"backbone.{clip_key}"
+                        elif 'text' in clip_key:
+                            model_key = f"backbone.{clip_key}"
+                        else:
+                            model_key = f"backbone.{clip_key}"
+                else:
+                    # logit_scale etc
+                    model_key = f"backbone.{clip_key}"
+                
+                if model_key is None:
+                    continue
+                
+                # Try to match
+                if model_key in model_state_dict:
+                    if clip_value.shape == model_state_dict[model_key].shape:
+                        filtered_state_dict[model_key] = clip_value
                         
-            missing_keys, unexpected_keys = model.load_state_dict(filtered_state_dict, strict=False)            
+                if model_key in model_state_dict:
+                    if clip_value.shape == model_state_dict[model_key].shape:
+                        filtered_state_dict[model_key] = clip_value
+                        
+                else:
+                    # Try alternative: remove one level of nesting
+                    if 'vision_model.vision_model.' in model_key:
+                        alt_key = model_key.replace('vision_model.vision_model.', 'vision_model.')
+                        if alt_key in model_state_dict and clip_value.shape == model_state_dict[alt_key].shape:
+                            filtered_state_dict[alt_key] = clip_value
+                            continue
+                    
+                    if 'text_model.text_model.' in model_key:
+                        alt_key = model_key.replace('text_model.text_model.', 'text_model.')
+                        if alt_key in model_state_dict and clip_value.shape == model_state_dict[alt_key].shape:
+                            filtered_state_dict[alt_key] = clip_value
+                            continue
+            
+            # Load
+            missing_keys, unexpected_keys = model.load_state_dict(filtered_state_dict, strict=False)
+            
             print(f"✓ Loaded {len(filtered_state_dict)} parameters from CLIP checkpoint")
-            if missing_keys:
-                print(f"  Missing keys (detection heads): {len(missing_keys)}")
-            if unexpected_keys:
-                print(f"  Unexpected keys: {len(unexpected_keys)}")
+            
+            # Breakdown
+            vision_cnt = len([k for k in filtered_state_dict if 'vision' in k])
+            text_cnt = len([k for k in filtered_state_dict if 'text' in k])
+            proj_cnt = len([k for k in filtered_state_dict if 'projection' in k])
+            other_cnt = len(filtered_state_dict) - vision_cnt - text_cnt - proj_cnt
+            
+            print(f"  Components loaded:")
+            print(f"    - Vision: {vision_cnt}")
+            print(f"    - Text: {text_cnt}")
+            print(f"    - Projections: {proj_cnt}")
+            print(f"    - Other: {other_cnt}")
+            
+            detection_missing = [k for k in missing_keys if any(x in k for x in 
+                ['class_head', 'box_head', 'layer_norm', 'text_projection_for_detection'])]
+            print(f"  Missing (detection heads): {len(detection_missing)} [Expected]")
         
         model = model.to(self.device)
         

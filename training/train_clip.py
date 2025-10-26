@@ -52,7 +52,7 @@ class CLIPBackboneTrainer :
         
         # Mixed precision
         self.use_amp = config['training']['mixed_precision']
-        self.scaler = GradScaler() if self.use_amp else None
+        self.scaler = GradScaler(device=self.device) if self.use_amp else None
         
         # Training state
         self.start_epoch = 0
@@ -107,9 +107,8 @@ class CLIPBackboneTrainer :
             dataset_split="train",
             image_column="image",
             text_column="th_sentences_raw",
-            cap_per_image=5,
+            cap_per_image=1,
             augment=True,
-            max_samples=10000
         )
         
         val_dataset = CLIPPretrainingDataset(
@@ -117,9 +116,8 @@ class CLIPBackboneTrainer :
             dataset_split="validation",
             image_column="image",
             text_column="th_sentences_raw",
-            cap_per_image=5,
+            cap_per_image=1,
             augment=False,
-            max_samples=2000
         )
         
         # train_dataset = CLIPPretrainingDataset(
@@ -290,7 +288,7 @@ class CLIPBackboneTrainer :
             
             # Forward
             if self.use_amp:
-                with autocast():
+                with autocast(device_type=self.device.type):
                     outputs = self.model(
                         pixel_values=pixel_values,
                         input_ids=input_ids,
@@ -533,12 +531,15 @@ def main():
     if args.resume:
         checkpoint = torch.load(args.resume)
         trainer.model.load_state_dict(checkpoint['model_state_dict'])
-        trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        trainer.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        trainer.start_epoch = checkpoint['epoch'] + 1
-        trainer.best_accuracy = checkpoint.get('best_accuracy', 0.0)
-        print(f"✓ Resumed from epoch {trainer.start_epoch}")
-    
+        # trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        # trainer.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        # trainer.start_epoch = checkpoint['epoch'] + 1
+        # trainer.best_accuracy = checkpoint.get('best_accuracy', 0.0)
+        # print(f"✓ Resumed from epoch {trainer.start_epoch}")
+        
+        trainer.start_epoch = 0
+        trainer.best_map = 0.0
+        trainer.global_step = 0
     # Train
     trainer.train()
 
