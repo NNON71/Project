@@ -80,8 +80,8 @@ class CustomOWLViTForObjectDetection(nn.Module) :
         self.projection_dim = d_out
         
         # Image Patch Grid Size (img_size: 224x224, patch_size: 32x32)
-        self.num_patches_height = 224 // 32
-        self.num_patches_width = 224 // 32
+        self.num_patches_height = 224 // 32 #16 
+        self.num_patches_width = 224 // 32 #16 #224 // 32
         self.num_patches = self.num_patches_height * self.num_patches_width
         
         self._print_model_summary()
@@ -144,12 +144,24 @@ class CustomOWLViTForObjectDetection(nn.Module) :
         
         # Reshape to feature maps
         batch_size = image_embeds.shape[0]
+        # num_patches = image_embeds.shape[1]
+        # hidden_size = image_embeds.shape[2]
+        
+        # grid_size = int(num_patches ** 0.5)
+        
+        # feature_map = image_embeds.reshape(
+        #     batch_size,
+        #     grid_size,
+        #     grid_size,
+        #     hidden_size
+        # )
         feature_map = image_embeds.reshape(
             batch_size,
             self.num_patches_height,
             self.num_patches_width,
             self.vision_hidden_size
-        )
+        )  # [B, H_patch, W_patch, vision_hidden_size]
+        
         
         # Get text embeddings
         text_embeds = clip_outputs.get('text_embeds', None)  # [B, projection_dim] or None

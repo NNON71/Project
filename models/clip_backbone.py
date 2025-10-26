@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers import CLIPVisionModel, AutoModel, AutoTokenizer
+from transformers import CLIPVisionModel, AutoModel, AutoTokenizer, ResNetModel
 from typing import Dict, Optional
 
 class OWLViTCLIPBackbone(nn.Module) :
@@ -41,8 +41,11 @@ class OWLViTCLIPBackbone(nn.Module) :
         self.tokenizer = AutoTokenizer.from_pretrained(text_encoder_name)
         
         # Projection layers
-        self.vision_projection = nn.Linear(vision_hidden_size, d_out, bias=False)
-        self.text_projection = nn.Linear(text_hidden_size, d_out, bias=False)
+        self.vision_projection = nn.Linear(d_out, d_out, bias=False)
+        self.text_projection = nn.Linear(d_out, d_out, bias=False)
+        
+        self.vision_pre_projection = nn.Linear(vision_hidden_size, d_out, bias=False)  # 768→512
+        self.text_pre_projection = nn.Linear(text_hidden_size, d_out, bias=False)      # 768→512
         
         # logit scale parameter
         self.logit_scale = nn.Parameter(torch.ones([]) * torch.log(torch.tensor(1 / 0.07)))
@@ -73,9 +76,11 @@ class OWLViTCLIPBackbone(nn.Module) :
         
         # Get pooler output (CLS token)
         pooler_output = vision_outputs.pooler_output  # [B, vision_hidden_size]
+        pre_embeds = self.vision_pre_projection(pooler_output)  # [B, 768] → [B, 512]
+        image_embeds = self.vision_projection(pre_embeds)       # [B, 512] → [B, 512]
         
         # Project to d_out
-        image_embeds = self.vision_projection(pooler_output)  # [B, d_out]
+        # image_embeds = self.vision_projection(pooler_output)  # [B, d_out]
         
         return {
             'last_hidden_state': vision_outputs.last_hidden_state,
@@ -107,10 +112,16 @@ class OWLViTCLIPBackbone(nn.Module) :
         )
         
         # Get pooler output (CLS token)
-        pooler_output = text_outputs.pooler_output  # [B, text_hidden_size]
+        if hasattr(text_outputs, 'pooler_output'):
+            pooler_output = text_outputs.pooler_output  # [B, 768]
+        else:
+            pooler_output = text_outputs.last_hidden_state[:, 0, :]  # [B, 768]
         
         # Project to d_out
-        text_embeds = self.text_projection(pooler_output)  # [B, d_out]
+        # text_embeds = self.text_projection(pooler_output)  # [B, d_out]
+        
+        pre_embeds = self.text_pre_projection(pooler_output)  # 768→512
+        text_embeds = self.text_projection(pre_embeds)        # 512→512
         
         return {
             'last_hidden_state': text_outputs.last_hidden_state,
