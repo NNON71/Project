@@ -1,7 +1,7 @@
 # OWL-ViT Detection Training Configuration (Stage 2)
 
 experiment:
-  name: "thai_owlvit_detection"
+  name: "dinov2_owlvit_detection"
   seed: 42
   device: "cuda"
 
@@ -9,8 +9,8 @@ model:
   projection_dim: 512
   image_encoder: "openai/clip-vit-base-patch32"
   text_encoder: "clicknext/phayathaibert"
-  freeze_clip_backbone: false  # แนะนำให้ freeze ในตอนแรก
-  clip_checkpoint: "checkpoints/clip_backbone/epoch_2.pth"
+  freeze_clip_backbone: true  # แนะนำให้ freeze ในตอนแรก
+  clip_checkpoint: "checkpoints/clip_resnet/clip/best.pth"
 
 dataset:
   # Annotations (COCO format)
@@ -54,20 +54,20 @@ dataset:
   num_workers: 4
 
 training:
-  epochs: 12
+  epochs: 15
   batch_size: 16
   learning_rate: 5.0e-4
-  backbone_lr_mult: 0.1  # ถ้า unfreeze backbone
+  # backbone_lr_mult: 0.01  # ถ้า unfreeze backbone
   weight_decay: 1.0e-4
   min_lr: 1.0e-6
   scheduler_t0: 10
-  warmup_epochs: 2
+  warmup_epochs: 5
   grad_clip_norm: 1.0
   mixed_precision: true
-  save_interval: 4
+  save_interval: 5
   
   # Loss Weights
-  class_loss_weight: 2.0
+  class_loss_weight: 1.0
   box_loss_weight: 5.0
   giou_loss_weight: 3.0
   clip_loss_weight: 0.0
@@ -82,11 +82,11 @@ wandb:
   enabled: true
   project: "thai-owlvit"
   entity: "nnon71"
-  run_name: "owlvit_detection_freeze_tune"
+  run_name: "dinov2_owlvit_detection"
   log_interval: 10
   image_log_interval: 5
 
 checkpoint:
-  save_dir: "checkpoints/owlvit_detection"
+  save_dir: "checkpoints/clip_resnet/owlvit"
   save_best: true
-  save_last: false
+  save_last: true
